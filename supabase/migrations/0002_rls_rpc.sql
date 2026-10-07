@@ -127,9 +127,8 @@ CREATE POLICY "academics_update_owner" ON academics
 CREATE POLICY "academics_update_admin" ON academics
   FOR UPDATE USING (is_admin());
 
--- Public academics view
-CREATE POLICY "public_academics_select" ON public_academics
-  FOR SELECT USING (TRUE);
+-- Public academics view (inherits RLS from academics table)
+-- No policy needed - views automatically use underlying table policies
 
 -- ============================================================================
 -- TEACHER/ALUMNI/GUARDIAN INFO RLS
