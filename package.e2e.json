@@ -1,0 +1,19 @@
+{
+  "name": "bgpsc-community-e2e",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:debug": "playwright test --debug",
+    "test:a11y": "playwright test tests/accessibility.spec.ts",
+    "test:responsive": "playwright test tests/responsive.spec.ts",
+    "test:rls": "playwright test tests/rls-attacks.spec.ts",
+    "lighthouse": "lhci autorun"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.40.0",
+    "@axe-core/playwright": "^4.8.0",
+    "@lhci/cli": "^0.13.0"
+  }
+}

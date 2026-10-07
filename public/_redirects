@@ -1,0 +1,6 @@
+# SPA fallback - all routes to index.html
+/*    /index.html   200
+
+# Legacy redirects
+/u/:handle    /@:handle    301
+/profile/:handle    /@:handle    301
