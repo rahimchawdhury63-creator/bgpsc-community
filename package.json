@@ -8,25 +8,27 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
+    "gen:types": "node scripts/gen-db-types.mjs",
+    "gen:types:check": "node scripts/gen-db-types.mjs --check",
     "lint": "eslint src --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "test": "vitest",
     "check-manifests": "node scripts/check-manifests.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.0",
+    "@tanstack/react-query": "^5.17.0",
+    "clsx": "^2.0.0",
+    "date-fns": "^3.0.0",
+    "idb-keyval": "^6.2.1",
+    "jspdf": "^2.5.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "react-router-dom": "^6.21.0",
-    "zustand": "^4.4.7",
-    "date-fns": "^3.0.0",
-    "clsx": "^2.0.0",
     "react-markdown": "^9.0.1",
-    "remark-gfm": "^4.0.0",
+    "react-router-dom": "^6.21.0",
     "rehype-sanitize": "^6.0.0",
+    "remark-gfm": "^4.0.0",
     "web-push": "^3.6.7",
-    "jspdf": "^2.5.1",
-    "idb-keyval": "^6.2.1",
-    "@tanstack/react-query": "^5.17.0"
+    "zustand": "^4.4.7"
   },
   "devDependencies": {
     "@types/react": "^18.2.43",
@@ -42,6 +44,7 @@
     "tailwindcss": "^3.4.0",
     "typescript": "^5.3.3",
     "vite": "^5.0.8",
-    "vitest": "^1.1.0"
+    "vitest": "^1.1.0",
+    "wrangler": "^3.114.17"
   }
 }

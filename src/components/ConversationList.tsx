@@ -1,5 +1,4 @@
 import { format, isToday, isYesterday } from 'date-fns';
-import type { Conversation, Profile } from '../types/database';
 import { useAuthStore } from '../lib/stores/auth';
 
 interface ConversationListProps {

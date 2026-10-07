@@ -74,7 +74,7 @@ export default function Notifications() {
               <div className="flex-1">
                 <p>{notif.body_text}</p>
                 <p className="mt-1 text-xs text-gray-500">
-                  {formatDistanceToNow(new Date(notif.created_at), { addSuffix: true, locale: bn })}
+                  {formatDistanceToNow(new Date(notif.created_at ?? 0), { addSuffix: true, locale: bn })}
                 </p>
               </div>
             </div>

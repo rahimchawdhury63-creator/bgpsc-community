@@ -16,6 +16,7 @@ export default function ProfilePage() {
   const { data: profile } = useQuery({
     queryKey: ['profile', cleanHandle],
     queryFn: async () => {
+      if (!cleanHandle) return null;
       const { data, error } = await supabase
         .from('profiles')
         .select('*')

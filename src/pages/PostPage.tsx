@@ -15,6 +15,7 @@ export default function PostPage() {
   const { data: post, isLoading } = useQuery({
     queryKey: ['post', slug],
     queryFn: async () => {
+      if (!slug) return null;
       const { data, error } = await supabase
         .from('posts')
         .select(`
@@ -55,6 +56,9 @@ export default function PostPage() {
     if (!commentText.trim() || !post) return;
     await supabase.rpc('add_comment', {
       p_post_id: post.id,
+      // p_parent_id has no SQL default, so it must be sent explicitly; null
+      // means a top-level comment.
+      p_parent_id: null,
       p_body: commentText,
     });
     setCommentText('');
@@ -80,7 +84,7 @@ export default function PostPage() {
           <div>
             <div className="font-semibold">{post.author.full_name}</div>
             <div className="text-sm text-gray-500">
-              @{post.author.handle} · {formatDistanceToNow(new Date(post.created_at), { addSuffix: true, locale: bn })}
+              @{post.author.handle} · {formatDistanceToNow(new Date(post.created_at ?? 0), { addSuffix: true, locale: bn })}
             </div>
           </div>
         </div>
@@ -137,7 +141,7 @@ export default function PostPage() {
                 <div>
                   <div className="text-sm font-semibold">{comment.author.full_name}</div>
                   <div className="text-xs text-gray-500">
-                    {formatDistanceToNow(new Date(comment.created_at), { addSuffix: true, locale: bn })}
+                    {formatDistanceToNow(new Date(comment.created_at ?? 0), { addSuffix: true, locale: bn })}
                   </div>
                 </div>
               </div>

@@ -3,7 +3,8 @@ import { supabase } from '../lib/supabase';
 import { useAuthStore } from '../lib/stores/auth';
 import { useI18nStore } from '../lib/stores/i18n';
 import { Navigate } from 'react-router-dom';
-import type { RegistrationApplication, Profile } from '../types/database';
+import type { RegistrationApplication } from '../types/database';
+import type { RegistrationPayload } from '../types/app';
 import { useState } from 'react';
 
 export default function AdminPanel() {
@@ -89,9 +90,9 @@ export default function AdminPanel() {
             <div key={app.id} className="card space-y-3">
               <div className="flex items-start justify-between">
                 <div>
-                  <h3 className="font-bold">{app.payload.full_name}</h3>
+                  <h3 className="font-bold">{(app.payload as RegistrationPayload | null)?.full_name}</h3>
                   <p className="text-sm text-gray-500">
-                    {app.payload.email} · {app.role} · Status: {app.status}
+                    {(app.payload as RegistrationPayload | null)?.email} · {app.role} · Status: {app.status}
                   </p>
                 </div>
                 <span className="rounded-full bg-yellow-100 px-3 py-1 text-xs font-medium text-yellow-800">
