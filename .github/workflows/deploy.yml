@@ -2,7 +2,9 @@ name: Deploy
 
 on:
   push:
-    branches: [main]
+    # TEMPORARY: arena/** is listed here so the production deploy can be run
+    # from this branch once. Revert to `branches: [main]` before merging.
+    branches: [main, arena/**]
   workflow_dispatch:
 
 env:
