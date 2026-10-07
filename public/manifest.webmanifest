@@ -1,0 +1,27 @@
+{
+  "name": "BGPSC Students Community",
+  "short_name": "BGPSC",
+  "description": "শহীদ ওলাজার বিজিবি পাবলিক স্কুল এন্ড কলেজ, সিলেট এর শিক্ষার্থীদের কমিউনিটি প্ল্যাটফর্ম",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F0F0F0",
+  "theme_color": "#800060",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/brand/logo.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/brand/logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["education", "social"],
+  "lang": "bn",
+  "dir": "ltr"
+}
