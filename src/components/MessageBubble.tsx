@@ -1,19 +1,17 @@
 import { useState } from 'react';
 import { format } from 'date-fns';
-import type { Message, Profile } from '../types/database';
-import { useAuthStore } from '../lib/stores/auth';
+import type { RichMessage } from '../types/app';
 import { supabase } from '../lib/supabase';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 
 interface MessageBubbleProps {
-  message: Message & { sender: Profile; reply_to?: Message };
+  message: RichMessage;
   isOwn: boolean;
   showAvatar: boolean;
   onReply: () => void;
 }
 
 export default function MessageBubble({ message, isOwn, showAvatar, onReply }: MessageBubbleProps) {
-  const { profile } = useAuthStore();
   const queryClient = useQueryClient();
   const [showActions, setShowActions] = useState(false);
   const [showReactions, setShowReactions] = useState(false);
@@ -62,8 +60,8 @@ export default function MessageBubble({ message, isOwn, showAvatar, onReply }: M
       {/* Avatar */}
       {showAvatar && !isOwn ? (
         <img
-          src={message.sender.avatar_url || '/brand/logo.png'}
-          alt={message.sender.full_name}
+          src={message.sender?.avatar_url || '/brand/logo.png'}
+          alt={message.sender?.full_name ?? ''}
           className="h-8 w-8 rounded-full flex-shrink-0"
         />
       ) : (
@@ -74,7 +72,7 @@ export default function MessageBubble({ message, isOwn, showAvatar, onReply }: M
       <div className={`max-w-[70%] ${isOwn ? 'items-end' : 'items-start'} flex flex-col`}>
         {/* Sender Name (for groups) */}
         {showAvatar && !isOwn && (
-          <div className="text-xs text-gray-500 mb-1">{message.sender.full_name}</div>
+          <div className="text-xs text-gray-500 mb-1">{message.sender?.full_name}</div>
         )}
 
         {/* Reply Quote */}
@@ -112,7 +110,7 @@ export default function MessageBubble({ message, isOwn, showAvatar, onReply }: M
 
           {/* Timestamp & Status */}
           <div className={`mt-1 flex items-center gap-1 text-xs ${isOwn ? 'text-brand-100' : 'text-gray-500'}`}>
-            <span>{format(new Date(message.created_at), 'h:mm a')}</span>
+            <span>{format(new Date(message.created_at ?? 0), 'h:mm a')}</span>
             {isOwn && (
               <span>
                 {message.read_at ? '✓✓' : message.delivered_at ? '✓✓' : '✓'}

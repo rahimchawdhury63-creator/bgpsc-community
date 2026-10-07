@@ -2,11 +2,10 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
 import { useAuthStore } from '../lib/stores/auth';
-import { useI18nStore } from '../lib/stores/i18n';
+import type { NotificationPrefsMap } from '../types/app';
 
 export default function PushPreferences() {
   const { profile } = useAuthStore();
-  const { t } = useI18nStore();
   const queryClient = useQueryClient();
 
   const { data: prefs } = useQuery({
@@ -33,7 +32,7 @@ export default function PushPreferences() {
         .from('notification_prefs')
         .upsert({
           user_id: profile.id,
-          prefs: { ...prefs?.prefs, ...updates },
+          prefs: { ...(prefs?.prefs as NotificationPrefsMap | null), ...updates },
           quiet_start: quietStart,
           quiet_end: quietEnd,
         });
@@ -62,7 +61,7 @@ export default function PushPreferences() {
   ];
 
   const handleToggle = (key: string, channel: 'in_app' | 'push') => {
-    const currentPrefs = prefs?.prefs || {};
+    const currentPrefs = (prefs?.prefs as NotificationPrefsMap | null) || {};
     const current = currentPrefs[key]?.[channel] ?? true;
     
     updatePrefsMutation.mutate({
@@ -129,7 +128,7 @@ export default function PushPreferences() {
 
         <div className="space-y-3">
           {notificationTypes.map(type => {
-            const typePrefs = prefs?.prefs?.[type.key] || {};
+            const typePrefs = (prefs?.prefs as NotificationPrefsMap | null)?.[type.key] || {};
             const inApp = typePrefs.in_app ?? true;
             const push = typePrefs.push ?? true;
 

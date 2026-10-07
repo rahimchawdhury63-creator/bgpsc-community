@@ -34,7 +34,7 @@ export default function PostCard({ post }: PostCardProps) {
     },
   });
 
-  const timeAgo = formatDistanceToNow(new Date(post.created_at), {
+  const timeAgo = formatDistanceToNow(new Date(post.created_at ?? 0), {
     addSuffix: true,
     locale: locale === 'bn' ? bn : enUS,
   });
@@ -93,7 +93,7 @@ export default function PostCard({ post }: PostCardProps) {
       {/* Images */}
       {post.images && post.images.length > 0 && !post.sensitive && (
         <div className="grid gap-2">
-          {post.images.slice(0, 4).map((img, i) => (
+          {post.images.slice(0, 4).map((img) => (
             <img
               key={img.id}
               src={img.url}

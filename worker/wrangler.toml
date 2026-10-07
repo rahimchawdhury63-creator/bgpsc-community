@@ -1,11 +1,16 @@
-{
-  "name": "bgpsc-worker",
-  "main": "index.ts",
-  "compatibility_date": "2024-01-01",
-  "triggers": {
-    "crons": [
-      "* * * * *",
-      "0 18 31 12 *"
-    ]
-  }
-}
+name = "bgpsc-worker"
+main = "index.ts"
+compatibility_date = "2025-01-01"
+
+# web-push is a Node library (it reaches for node:crypto and friends), so the
+# Worker needs the Node compatibility layer to bundle and run it.
+compatibility_flags = ["nodejs_compat"]
+
+# Non-secret configuration. SUPABASE_URL is injected at deploy time from
+# SUPABASE_PROJECT_REF; secrets (service role key, VAPID keys, CRON_SECRET)
+# are set with `wrangler secret put` — see .github/workflows/deploy.yml.
+[vars]
+VAPID_SUBJECT = "mailto:rrc@bsdc.info.bd"
+
+[triggers]
+crons = ["* * * * *", "0 18 31 12 *"]

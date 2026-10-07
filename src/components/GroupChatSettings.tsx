@@ -36,20 +36,6 @@ export default function GroupChatSettings({ conversation, onClose }: GroupChatSe
     },
   });
 
-  // Add member
-  const addMemberMutation = useMutation({
-    mutationFn: async (userId: string) => {
-      await supabase.from('conversation_members').insert({
-        conversation_id: conversation.id,
-        user_id: userId,
-        role: 'member',
-      });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['conversations'] });
-    },
-  });
-
   // Remove member
   const removeMemberMutation = useMutation({
     mutationFn: async (userId: string) => {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
 import { useAuthStore } from '../lib/stores/auth';
@@ -7,7 +7,7 @@ import PostCard from '../components/PostCard';
 import type { PostWithAuthor } from '../types/database';
 
 export default function Home() {
-  const { session, profile } = useAuthStore();
+  const { profile } = useAuthStore();
   const { t } = useI18nStore();
   const [tab, setTab] = useState<'forYou' | 'latest' | 'myClass' | 'following' | 'trending'>('forYou');
 

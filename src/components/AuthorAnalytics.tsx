@@ -29,9 +29,9 @@ export default function AuthorAnalytics({ postId }: AuthorAnalyticsProps) {
         .single();
 
       // Calculate aggregates
-      const totalViews = dailyStats?.reduce((sum, s) => sum + s.views, 0) || 0;
-      const totalImpressions = dailyStats?.reduce((sum, s) => sum + s.impressions, 0) || 0;
-      const totalDwell = dailyStats?.reduce((sum, s) => sum + s.dwell_ms, 0) || 0;
+      const totalViews = dailyStats?.reduce((sum, s) => sum + (s.views ?? 0), 0) || 0;
+      const totalImpressions = dailyStats?.reduce((sum, s) => sum + (s.impressions ?? 0), 0) || 0;
+      const totalDwell = dailyStats?.reduce((sum, s) => sum + (s.dwell_ms ?? 0), 0) || 0;
       const avgDwell = totalImpressions > 0 ? totalDwell / totalImpressions : 0;
 
       return {
@@ -41,7 +41,10 @@ export default function AuthorAnalytics({ postId }: AuthorAnalyticsProps) {
         totalImpressions,
         totalDwell,
         avgDwell,
-        engagementRate: post ? (post.likes_count + post.comments_count + post.shares_count) / Math.max(1, totalImpressions) : 0,
+        engagementRate: post
+          ? ((post.likes_count ?? 0) + (post.comments_count ?? 0) + (post.shares_count ?? 0)) /
+            Math.max(1, totalImpressions)
+          : 0,
       };
     },
     enabled: !!profile && !!postId,
@@ -103,8 +106,8 @@ export default function AuthorAnalytics({ postId }: AuthorAnalyticsProps) {
           <h4 className="text-sm font-semibold mb-2">Last 30 Days</h4>
           <div className="h-32 flex items-end gap-1">
             {stats.dailyStats.slice(-14).map((day, idx) => {
-              const maxViews = Math.max(...stats.dailyStats.map(s => s.views));
-              const height = maxViews > 0 ? (day.views / maxViews) * 100 : 0;
+              const maxViews = Math.max(...stats.dailyStats.map(s => s.views ?? 0));
+              const height = maxViews > 0 ? ((day.views ?? 0) / maxViews) * 100 : 0;
               return (
                 <div
                   key={idx}

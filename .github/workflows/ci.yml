@@ -10,7 +10,6 @@ jobs:
   typecheck:
     name: Type Check
     runs-on: ubuntu-latest
-    continue-on-error: true  # Temporarily allow type errors (need to generate Supabase types)
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -18,7 +17,22 @@ jobs:
           node-version: '20'
           cache: 'npm'
       - run: npm ci
+      # Fails the build for real now: src/types/database.ts is generated from the
+      # migrations, so type errors are genuine drift rather than a known gap.
       - run: npm run typecheck
+
+  types-up-to-date:
+    name: Generated Types Up To Date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      # Catches a migration that landed without re-running `npm run gen:types`.
+      - run: npm run gen:types:check
 
   build:
     name: Build
@@ -31,11 +45,25 @@ jobs:
           cache: 'npm'
       - run: npm ci
       - run: npm run build
-        continue-on-error: true  # Allow build to proceed despite type errors
       - uses: actions/upload-artifact@v4
         with:
           name: dist
           path: dist
+
+  worker-bundle:
+    name: Worker Bundle
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      # Bundles worker/index.ts and functions/ the same way the deploy does,
+      # without uploading anything.
+      - run: npx wrangler deploy --config worker/wrangler.toml --dry-run --outdir /tmp/worker-out
+      - run: npx wrangler pages functions build functions --outdir /tmp/fn-out
 
   manifest-check:
     name: Manifest Check
@@ -48,7 +76,6 @@ jobs:
           cache: 'npm'
       - run: npm ci
       - run: npm run check-manifests
-        continue-on-error: ${{ !hashFiles('docs/PART5_COMPLETE.md') }}
 
   secret-scan:
     name: Secret Scan
@@ -57,7 +84,6 @@ jobs:
       - uses: actions/checkout@v4
       - name: Scan for secrets
         run: |
-          # Check for common secret patterns
           ! grep -r "sk_live_\|sk_test_\|AKIA\|password\s*=\s*['\"]" src/ || exit 1
           ! grep -r "IMGBB_API_KEY.*fdbfbcfd3bc5189e50a50c574515298d" src/ || exit 1
           echo "No secrets found in source code"
@@ -69,7 +95,6 @@ jobs:
       - uses: actions/checkout@v4
       - name: Check migrations are additive
         run: |
-          # Verify migrations only add, never drop
           for file in supabase/migrations/*.sql; do
             if grep -q "DROP TABLE\|DROP COLUMN\|DROP INDEX" "$file"; then
               echo "ERROR: Migration $file contains destructive operations"

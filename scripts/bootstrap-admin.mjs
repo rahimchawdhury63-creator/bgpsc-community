@@ -9,19 +9,46 @@ const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'rrc@bsdc.info.bd';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
 
-if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY || !ADMIN_PASSWORD) {
-  console.error('Missing required environment variables');
+// Name every missing variable: an opaque "missing environment variables" from a
+// CI job tells the operator nothing about which secret to add.
+const required = {
+  SUPABASE_URL,
+  SUPABASE_SERVICE_ROLE_KEY,
+  ADMIN_PASSWORD,
+};
+const missing = Object.entries(required)
+  .filter(([, value]) => !value)
+  .map(([name]) => name);
+
+if (missing.length > 0) {
+  console.error(`Missing required environment variable(s): ${missing.join(', ')}`);
+  console.error(
+    'These come from GitHub repository secrets — see .github/workflows/deploy.yml ' +
+      '(bootstrap-admin job).',
+  );
   process.exit(1);
 }
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
+/** Page through every auth user rather than trusting the first 50. */
+async function findUserByEmail(email) {
+  const perPage = 1000;
+  for (let page = 1; page <= 100; page++) {
+    const { data, error } = await supabase.auth.admin.listUsers({ page, perPage });
+    if (error) throw new Error(`listUsers failed: ${error.message}`);
+    const users = data?.users ?? [];
+    const match = users.find((u) => u.email?.toLowerCase() === email.toLowerCase());
+    if (match) return match;
+    if (users.length < perPage) return null;
+  }
+  return null;
+}
+
 async function bootstrap() {
   console.log(`Bootstrapping admin: ${ADMIN_EMAIL}`);
 
-  // Check if user exists
-  const { data: users } = await supabase.auth.admin.listUsers();
-  const existingUser = users?.users?.find(u => u.email === ADMIN_EMAIL);
+  const existingUser = await findUserByEmail(ADMIN_EMAIL);
 
   let userId;
 
@@ -29,15 +56,14 @@ async function bootstrap() {
     userId = existingUser.id;
     console.log(`Admin user already exists: ${userId}`);
   } else {
-    // Create auth user
     const { data, error } = await supabase.auth.admin.createUser({
       email: ADMIN_EMAIL,
       password: ADMIN_PASSWORD,
       email_confirm: true,
       user_metadata: {
         full_name: 'Rizwan Rahim Chowdhury',
-        handle: 'rrc'
-      }
+        handle: 'rrc',
+      },
     });
 
     if (error) {
@@ -49,7 +75,6 @@ async function bootstrap() {
     console.log(`Created admin user: ${userId}`);
   }
 
-  // Upsert admin profile
   const { error: profileError } = await supabase.from('profiles').upsert({
     id: userId,
     handle: 'rrc',
@@ -60,7 +85,7 @@ async function bootstrap() {
     verified: true,
     onboarded: true,
     locale: 'bn',
-    bio: 'BGPSC Students Community platform developer. Class 7 student at Shahid Olazar BGB Public School and College, Sylhet.'
+    bio: 'BGPSC Students Community platform developer. Class 7 student at Shahid Olazar BGB Public School and College, Sylhet.',
   });
 
   if (profileError) {
@@ -68,7 +93,8 @@ async function bootstrap() {
     process.exit(1);
   }
 
-  // Upsert academics for admin (Class 7)
+  // Everything below is best-effort: a missing optional table should not stop
+  // the admin account itself from existing.
   const { error: academicsError } = await supabase.from('academics').upsert({
     user_id: userId,
     current_class: 7,
@@ -78,29 +104,23 @@ async function bootstrap() {
   });
 
   if (academicsError) {
-    console.error('Failed to upsert admin academics:', academicsError.message);
+    console.warn('Skipped admin academics:', academicsError.message);
   }
 
-  // Grant founder badge
-  const { error: badgeError } = await supabase.from('user_badges').upsert({
-    user_id: userId,
-    badge_key: 'founder'
-  });
-
-  if (badgeError) {
-    console.error('Failed to grant founder badge:', badgeError.message);
+  for (const badgeKey of ['founder', 'verified']) {
+    const { error: badgeError } = await supabase.from('user_badges').upsert({
+      user_id: userId,
+      badge_key: badgeKey,
+    });
+    if (badgeError) {
+      console.warn(`Skipped '${badgeKey}' badge:`, badgeError.message);
+    }
   }
-
-  // Grant verified badge
-  await supabase.from('user_badges').upsert({
-    user_id: userId,
-    badge_key: 'verified'
-  });
 
   console.log('Admin bootstrap complete');
 }
 
-bootstrap().catch(e => {
+bootstrap().catch((e) => {
   console.error(e);
   process.exit(1);
 });

@@ -1,5 +1,5 @@
-import { supabase } from '../supabase';
-import type { Post, Profile } from '../../types/database';
+import { supabase } from './supabase';
+import type { Post, Profile } from '../types/database';
 
 // Advanced 4-stage ranking pipeline
 
@@ -31,7 +31,7 @@ export async function retrieveCandidates(
   context: RankingContext,
   limit: number = 300
 ): Promise<Post[]> {
-  const { viewer, followedIds, blockedIds, mutedIds, hiddenPostIds } = context;
+  const { followedIds, blockedIds, mutedIds, hiddenPostIds } = context;
 
   // Get in-network posts (from followed users)
   const { data: inNetworkPosts } = await supabase
@@ -71,22 +71,23 @@ export async function lightRank(
 
   const scored = candidates.map(post => {
     // Recency score (exponential decay)
-    const age = now - new Date(post.created_at).getTime();
+    const age = now - new Date(post.created_at ?? 0).getTime();
     const recencyScore = Math.exp(-age / tau);
 
     // Author affinity
-    const authorAffinity = context.followedIds.includes(post.author_id) ? 2.0 : 1.0;
+    const authorAffinity = context.followedIds.includes(post.author_id ?? '') ? 2.0 : 1.0;
 
     // Language match
     const languageMatch = post.language === context.viewer.locale ? 1.2 : 1.0;
 
     // Media presence boost
-    const mediaBoost = post.images_count > 0 ? 1.1 : 1.0;
+    const mediaBoost = (post.images_count ?? 0) > 0 ? 1.1 : 1.0;
 
     // Engagement velocity (likes/comments/shares per hour)
     const hoursSincePublish = Math.max(1, age / (3600 * 1000));
     const engagementVelocity =
-      (post.likes_count + post.comments_count * 2 + post.shares_count * 3) / hoursSincePublish;
+      ((post.likes_count ?? 0) + (post.comments_count ?? 0) * 2 + (post.shares_count ?? 0) * 3) /
+      hoursSincePublish;
 
     // Light score
     const score = recencyScore * authorAffinity * languageMatch * mediaBoost * (1 + engagementVelocity * 0.1);
@@ -121,30 +122,30 @@ export async function heavyRank(
     .eq('id', 1)
     .single();
 
-  const w = weights || {
-    w_dwell: 0.35,
-    w_comment: 0.20,
-    w_share: 0.30,
-    w_hide: 0.10,
-    w_report: 0.05,
+  const w = {
+    w_dwell: weights?.w_dwell ?? 0.35,
+    w_comment: weights?.w_comment ?? 0.2,
+    w_share: weights?.w_share ?? 0.3,
+    w_hide: weights?.w_hide ?? 0.1,
+    w_report: weights?.w_report ?? 0.05,
   };
 
   const scored = candidates.map(post => {
     // Feature vector (simplified - in production would use actual ML model)
     const features = {
       // User-post affinity
-      authorAffinity: context.followedIds.includes(post.author_id) ? 1.0 : 0.3,
-      interactionAffinity: context.interactionHistory.get(post.author_id) || 0.1,
+      authorAffinity: context.followedIds.includes(post.author_id ?? '') ? 1.0 : 0.3,
+      interactionAffinity: context.interactionHistory.get(post.author_id ?? '') || 0.1,
 
       // Content features
-      hasMedia: post.images_count > 0 ? 1.0 : 0.0,
+      hasMedia: (post.images_count ?? 0) > 0 ? 1.0 : 0.0,
       textLength: Math.min(1.0, (post.body_text?.length || 0) / 1000),
-      hasLinks: post.links_count > 0 ? 1.0 : 0.0,
+      hasLinks: (post.links_count ?? 0) > 0 ? 1.0 : 0.0,
 
       // Engagement features
-      likeRate: post.likes_count / Math.max(1, post.impressions_count),
-      commentRate: post.comments_count / Math.max(1, post.impressions_count),
-      shareRate: post.shares_count / Math.max(1, post.impressions_count),
+      likeRate: (post.likes_count ?? 0) / Math.max(1, post.impressions_count ?? 0),
+      commentRate: (post.comments_count ?? 0) / Math.max(1, post.impressions_count ?? 0),
+      shareRate: (post.shares_count ?? 0) / Math.max(1, post.impressions_count ?? 0),
       hideRate: 0.01, // Would track actual hide rate
       reportRate: 0.005, // Would track actual report rate
 
@@ -154,7 +155,7 @@ export async function heavyRank(
       languageMatch: post.language === context.viewer.locale ? 1.0 : 0.7,
 
       // Recency
-      ageHours: (Date.now() - new Date(post.created_at).getTime()) / (3600 * 1000),
+      ageHours: (Date.now() - new Date(post.created_at ?? 0).getTime()) / (3600 * 1000),
     };
 
     // Multi-task logistic heads (simplified)
@@ -190,7 +191,7 @@ export async function heavyRank(
 // Stage 4: Re-ranking & Diversity
 export async function reRank(
   candidates: RankedPost[],
-  context: RankingContext,
+  _context: RankingContext,
   finalLimit: number = 20
 ): Promise<RankedPost[]> {
   const epsilon = 0.07; // 7% exploration
@@ -202,7 +203,7 @@ export async function reRank(
     if (results.length >= finalLimit) break;
 
     // Diversity penalties
-    const authorCount = seenAuthors.get(post.author_id) || 0;
+    const authorCount = seenAuthors.get(post.author_id ?? '') || 0;
     const authorPenalty = authorCount >= 2 ? 0.5 : 1.0; // Never 3+ consecutive from same author
 
     const topic = post.class_tag?.toString() || 'general';
@@ -213,9 +214,9 @@ export async function reRank(
     const diversityScore = authorPenalty * topicPenalty;
 
     // Exploration boost for new posts with low impressions
-    const ageHours = (Date.now() - new Date(post.created_at).getTime()) / (3600 * 1000);
+    const ageHours = (Date.now() - new Date(post.created_at ?? 0).getTime()) / (3600 * 1000);
     const explorationBoost =
-      ageHours < 24 && post.impressions_count < 50 ? 1.5 : 1.0;
+      ageHours < 24 && (post.impressions_count ?? 0) < 50 ? 1.5 : 1.0;
 
     // Final score
     const finalScore = post.score * diversityScore * explorationBoost;
@@ -237,7 +238,7 @@ export async function reRank(
     results.push(rankedPost);
 
     // Update tracking
-    seenAuthors.set(post.author_id, authorCount + 1);
+    seenAuthors.set(post.author_id ?? '', authorCount + 1);
     seenTopics.set(topic, topicCount + 1);
   }
 
@@ -304,18 +305,18 @@ export async function simpleRank(
     }
 
     // Step 3: Interactions (with decay)
-    const interactionAffinity = Math.min(2.0, context.interactionHistory.get(post.author_id) || 1.0);
+    const interactionAffinity = Math.min(2.0, context.interactionHistory.get(post.author_id ?? '') || 1.0);
 
     // Step 4: Onboarding interests
-    const interestOverlap = post.hashtags?.filter(tag => viewer.interests?.includes(tag)).length || 0;
+    const interestOverlap = post.hashtags?.filter((tag: string) => viewer.interests?.includes(tag)).length || 0;
     const interestBoost = interestOverlap > 0 ? 1.6 : 1.0;
 
     // Time decay
-    const age = Date.now() - new Date(post.created_at).getTime();
+    const age = Date.now() - new Date(post.created_at ?? 0).getTime();
     const timeDecay = Math.exp(-age / tau);
 
     // Following boost
-    const followingBoost = followedIds.includes(post.author_id) ? 2.0 : 1.0;
+    const followingBoost = followedIds.includes(post.author_id ?? '') ? 2.0 : 1.0;
 
     // Final score
     const score = classAffinity * locationBoost * interactionAffinity * interestBoost * timeDecay * followingBoost;

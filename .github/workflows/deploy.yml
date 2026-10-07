@@ -9,9 +9,47 @@ env:
   SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
 
 jobs:
+  preflight:
+    name: Preflight (secrets present?)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check required secrets
+        env:
+          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+          VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
+        run: |
+          missing=""
+          for name in \
+            SUPABASE_PROJECT_REF SUPABASE_ACCESS_TOKEN SUPABASE_DB_PASSWORD \
+            SUPABASE_ANON_KEY SUPABASE_SERVICE_ROLE_KEY \
+            ADMIN_EMAIL ADMIN_PASSWORD \
+            CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID \
+            CRON_SECRET VAPID_PRIVATE_KEY VAPID_PUBLIC_KEY
+          do
+            if [ -z "${!name}" ]; then missing="$missing $name"; fi
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Missing GitHub secret(s):$missing"
+            exit 1
+          fi
+          echo "All required secrets are present."
+          echo "CLOUDFLARE_ACCOUNT_ID length: ${#CLOUDFLARE_ACCOUNT_ID}"
+          echo "CLOUDFLARE_API_TOKEN length: ${#CLOUDFLARE_API_TOKEN}"
+
   migrate:
     name: Database Migration
     runs-on: ubuntu-latest
+    needs: preflight
     steps:
       - uses: actions/checkout@v4
       - uses: supabase/setup-cli@v1
@@ -37,12 +75,25 @@ jobs:
           node-version: '20'
           cache: 'npm'
       - run: npm ci
-      - run: node scripts/bootstrap-admin.mjs
+      - name: Bootstrap admin account
+        id: bootstrap
+        continue-on-error: true
         env:
           SUPABASE_URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
           ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+        run: node scripts/bootstrap-admin.mjs 2>&1 | tee /tmp/bootstrap.log
+      # Job logs are not readable from this environment, so failures are
+      # re-emitted as annotations, which are reachable through the REST API.
+      - name: Surface failure
+        if: steps.bootstrap.outcome == 'failure'
+        run: |
+          tail -30 /tmp/bootstrap.log | sed -e 's/%/%25/g' -e 's/\r/%0D/g' | \
+            while IFS= read -r line; do
+              [ -n "$line" ] && echo "::error::bootstrap-admin: $line"
+            done
+          exit 1
 
   build:
     name: Build
@@ -55,15 +106,19 @@ jobs:
           node-version: '20'
           cache: 'npm'
       - run: npm ci
+      - name: Verify build-time config
         env:
           VITE_PUBLIC_SUPABASE_URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co
           VITE_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-          VITE_PUBLIC_SITE_URL: https://bgpscian.bsdc.info.bd
+        run: |
+          : "${VITE_PUBLIC_SUPABASE_URL:?VITE_PUBLIC_SUPABASE_URL is empty - check the SUPABASE_PROJECT_REF secret}"
+          : "${VITE_PUBLIC_SUPABASE_ANON_KEY:?VITE_PUBLIC_SUPABASE_ANON_KEY is empty - check the SUPABASE_ANON_KEY secret}"
       - run: npm run build
         env:
           VITE_PUBLIC_SUPABASE_URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co
           VITE_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
           VITE_PUBLIC_SITE_URL: https://bgpscian.bsdc.info.bd
+      - run: npm run gen:types:check
       - uses: actions/upload-artifact@v4
         with:
           name: dist
@@ -72,18 +127,54 @@ jobs:
   deploy-pages:
     name: Deploy to Cloudflare Pages
     runs-on: ubuntu-latest
-    needs: [build, bootstrap-admin]
+    needs: build
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
       - uses: actions/download-artifact@v4
         with:
           name: dist
           path: dist
-      - uses: cloudflare/wrangler-action@v3
+      - name: Deploy
+        id: pages
+        continue-on-error: true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -o pipefail
+          # Idempotent: harmless if the project already exists.
+          npx wrangler pages project create bgpsc-community \
+            --production-branch=main 2>&1 | tee /tmp/pages.log || true
+          # functions/ at the repo root is bundled as Pages Functions.
+          npx wrangler pages deploy dist \
+            --project-name=bgpsc-community \
+            --commit-dirty=true \
+            --branch=main 2>&1 | tee -a /tmp/pages.log
+      - name: Capture URL
+        if: always()
+        run: |
+          grep -oE 'https://[a-z0-9.-]+\.pages\.dev' /tmp/pages.log 2>/dev/null | head -1 \
+            > pages-url.txt || true
+          echo "captured: $(cat pages-url.txt)"
+      - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy dist --project-name=bgpsc-community
+          name: pages-url
+          path: pages-url.txt
+          if-no-files-found: ignore
+      - name: Surface failure
+        if: steps.pages.outcome == 'failure'
+        run: |
+          tail -40 /tmp/pages.log | sed -e 's/%/%25/g' -e 's/\r/%0D/g' | \
+            while IFS= read -r line; do
+              [ -n "$line" ] && echo "::error::pages: $line"
+            done
+          exit 1
 
   deploy-worker:
     name: Deploy Worker
@@ -91,21 +182,118 @@ jobs:
     needs: migrate
     steps:
       - uses: actions/checkout@v4
-      - uses: cloudflare/wrangler-action@v3
+      - uses: actions/setup-node@v4
         with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: deploy worker/wrangler.toml
-          secrets: |
-            SUPABASE_SERVICE_ROLE_KEY
-            CRON_SECRET
-            VAPID_PRIVATE_KEY
-            VAPID_PUBLIC_KEY
+          node-version: '20'
+          cache: 'npm'
+      # The Worker imports @supabase/supabase-js and web-push, so wrangler needs
+      # node_modules present to bundle it.
+      - run: npm ci
+      - name: Deploy
+        id: worker
+        continue-on-error: true
         env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -o pipefail
+          npx wrangler deploy --config worker/wrangler.toml \
+            --var SUPABASE_URL:https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co \
+            2>&1 | tee /tmp/worker.log
+      # Secrets must be pushed AFTER the worker exists; doing it before is what
+      # made wrangler-action fail with "Failed to upload secrets."
+      - name: Set secrets
+        id: secrets
+        if: steps.worker.outcome == 'success'
+        continue-on-error: true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
           VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
           VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
+        run: |
+          set -o pipefail
+          for name in SUPABASE_SERVICE_ROLE_KEY CRON_SECRET VAPID_PRIVATE_KEY VAPID_PUBLIC_KEY; do
+            printf '%s' "${!name}" | npx wrangler secret put "$name" \
+              --config worker/wrangler.toml 2>&1 | tee -a /tmp/worker.log
+          done
+      - name: Capture URL
+        if: always()
+        run: |
+          grep -oE 'https://[a-z0-9.-]+\.workers\.dev' /tmp/worker.log 2>/dev/null | head -1 \
+            > worker-url.txt || true
+          echo "captured: $(cat worker-url.txt)"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: worker-url
+          path: worker-url.txt
+          if-no-files-found: ignore
+      - name: Surface failure
+        if: steps.worker.outcome == 'failure' || steps.secrets.outcome == 'failure'
+        run: |
+          tail -40 /tmp/worker.log | sed -e 's/%/%25/g' -e 's/\r/%0D/g' | \
+            while IFS= read -r line; do
+              [ -n "$line" ] && echo "::error::worker: $line"
+            done
+          exit 1
+
+  verify:
+    name: Verify Live
+    runs-on: ubuntu-latest
+    needs: [deploy-pages, deploy-worker]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: pages-url
+          path: urls
+        continue-on-error: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: worker-url
+          path: urls
+        continue-on-error: true
+      - name: Probe deployed endpoints
+        continue-on-error: true
+        id: probe
+        run: |
+          ok=1
+          probe() {
+            name="$1"; url="$2"
+            [ -z "$url" ] && { echo "::warning::$name: no URL captured"; return 1; }
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 -L "$url" || echo "000")
+            echo "::notice::$name -> HTTP $code ($url)"
+            echo "$name=$code" >> "$GITHUB_OUTPUT"
+            [ "$code" = "200" ] || ok=0
+            return 0
+          }
+          worker_url=$(cat urls/worker-url.txt 2>/dev/null || true)
+          pages_url=$(cat urls/pages-url.txt 2>/dev/null || true)
+          probe "Pages production" "https://bgpsc-community.pages.dev/"
+          probe "Pages deployment" "$pages_url"
+          probe "Pages SPA route" "https://bgpsc-community.pages.dev/settings"
+          probe "Pages robots.txt" "https://bgpsc-community.pages.dev/robots.txt"
+          probe "Worker healthz" "${worker_url:+$worker_url/healthz}"
+          # DNS for the custom domain is configured in the Cloudflare dashboard,
+          # so a failure here is a warning rather than a deploy failure.
+          cd_code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 -L \
+            "https://bgpscian.bsdc.info.bd/" || echo "000")
+          echo "Custom_domain=$cd_code" >> "$GITHUB_OUTPUT"
+          if [ "$cd_code" != "200" ]; then
+            echo "::warning::Custom domain https://bgpscian.bsdc.info.bd/ returned HTTP $cd_code - not attached to Pages yet"
+          fi
+          exit $((1 - ok))
+      - name: Report
+        if: always()
+        run: |
+          echo "Pages production: ${{ steps.probe.outputs.Pages_production }}"
+          echo "Pages deployment: ${{ steps.probe.outputs.Pages_deployment }}"
+          echo "Pages SPA route:  ${{ steps.probe.outputs.Pages_SPA_route }}"
+          echo "robots.txt:       ${{ steps.probe.outputs.Pages_robots_txt }}"
+          echo "Worker healthz:   ${{ steps.probe.outputs.Worker_healthz }}"
+          echo "Custom domain:    ${{ steps.probe.outputs.Custom_domain }}"
 
   deploy-edge-functions:
     name: Deploy Edge Functions

@@ -48,7 +48,7 @@ export default function Register() {
   const [step, setStep] = useState<Step>(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [applicationId, setApplicationId] = useState<string | null>(null);
+  const [, setApplicationId] = useState<string | null>(null);
 
   const [formData, setFormData] = useState<FormData>({
     full_name: '',
@@ -87,7 +87,6 @@ export default function Register() {
       const reader = new FileReader();
       reader.onload = () => {
         const base64 = reader.result as string;
-        const mime = file.type;
         const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600"><image href="${base64}" width="800" height="600"/></svg>`;
         resolve(svg);
       };

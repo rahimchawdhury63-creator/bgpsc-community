@@ -1,10 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
 import { useAuthStore } from '../lib/stores/auth';
 import { useI18nStore } from '../lib/stores/i18n';
-import type { Conversation, Message, Profile } from '../types/database';
+import type { RichMessage } from '../types/app';
 import { format, isToday, isYesterday } from 'date-fns';
 import { bn, enUS } from 'date-fns/locale';
 import MessageBubble from '../components/MessageBubble';
@@ -14,7 +13,6 @@ import PasscodeLock from '../components/PasscodeLock';
 import GroupChatSettings from '../components/GroupChatSettings';
 
 export default function Messages() {
-  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { profile } = useAuthStore();
   const { t, locale } = useI18nStore();
@@ -22,7 +20,7 @@ export default function Messages() {
   const [selectedConvId, setSelectedConvId] = useState<string | null>(null);
   const [showNewChat, setShowNewChat] = useState(false);
   const [showGroupSettings, setShowGroupSettings] = useState(false);
-  const [replyTo, setReplyTo] = useState<Message | null>(null);
+  const [replyTo, setReplyTo] = useState<RichMessage | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -76,7 +74,7 @@ export default function Messages() {
         .order('created_at', { ascending: true })
         .limit(100);
 
-      return data as (Message & { sender: Profile; reply_to?: Message })[];
+      return ((data ?? []) as unknown as RichMessage[]);
     },
     enabled: !!selectedConvId,
   });
@@ -95,7 +93,7 @@ export default function Messages() {
           table: 'messages',
           filter: `conversation_id=eq.${selectedConvId}`,
         },
-        (payload) => {
+        () => {
           queryClient.invalidateQueries({ queryKey: ['messages', selectedConvId] });
           
           // Auto-scroll to bottom if not scrolled up
@@ -149,7 +147,7 @@ export default function Messages() {
       const { data, error } = await supabase.rpc('send_message', {
         p_conv_id: selectedConvId,
         p_body: body,
-        p_reply_to_id: replyTo?.id || null,
+        p_reply_to_id: replyTo?.id ?? undefined,
         p_attachment: attachment || null,
       });
 
@@ -188,8 +186,10 @@ export default function Messages() {
   });
 
   // Group messages by date
-  const groupedMessages = filteredMessages?.reduce((groups: any[], msg) => {
-    const date = new Date(msg.created_at);
+  const groupedMessages = filteredMessages?.reduce<
+    { date: string; messages: RichMessage[] }[]
+  >((groups, msg) => {
+    const date = new Date(msg.created_at ?? 0);
     const dateKey = format(date, 'yyyy-MM-dd');
     
     const lastGroup = groups[groups.length - 1];
@@ -300,8 +300,8 @@ export default function Messages() {
             {/* Passcode Lock Check */}
             {isLocked ? (
               <PasscodeLock
-                conversationId={selectedConvId}
-                lockHash={selectedConv.membership.lock_hash}
+                conversationId={selectedConv.id}
+                lockHash={selectedConv.membership.lock_hash ?? ''}
                 onUnlock={() => {
                   // Unlock logic handled by PasscodeLock component
                 }}
@@ -434,7 +434,7 @@ function NewChatModal({ onClose, onCreate }: { onClose: () => void; onCreate: (c
         .from('profiles')
         .select('id, handle, full_name, avatar_url')
         .eq('status', 'approved')
-        .neq('id', profile?.id)
+        .neq('id', profile?.id ?? '')
         .ilike('full_name', `%${searchQuery}%`)
         .limit(10);
 

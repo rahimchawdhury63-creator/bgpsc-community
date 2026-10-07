@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '../lib/supabase';
 import { useAuthStore } from '../lib/stores/auth';
-import { useI18nStore } from '../lib/stores/i18n';
 import type { PostType } from '../types/database';
 import MarkdownToolbar from '../components/MarkdownToolbar';
 import ImageUploader from '../components/ImageUploader';
@@ -14,7 +13,6 @@ export default function CreatePost() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { profile } = useAuthStore();
-  const { t } = useI18nStore();
   
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');

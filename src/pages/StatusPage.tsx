@@ -58,7 +58,7 @@ export default function StatusPage() {
 
         <div className="flex items-center justify-between">
           <span className="font-medium">Submitted:</span>
-          <span>{new Date(application.submitted_at).toLocaleString()}</span>
+          <span>{new Date(application.submitted_at ?? 0).toLocaleString()}</span>
         </div>
 
         {application.reason && (
