@@ -30,8 +30,6 @@ jobs:
           VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
           VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
         run: |
-          # Fail with an explicit list instead of an opaque non-zero exit deep
-          # inside a downstream job.
           missing=""
           for name in \
             SUPABASE_PROJECT_REF SUPABASE_ACCESS_TOKEN SUPABASE_DB_PASSWORD \
@@ -44,10 +42,11 @@ jobs:
           done
           if [ -n "$missing" ]; then
             echo "::error::Missing GitHub secret(s):$missing"
-            echo "Add them under: Settings -> Secrets and variables -> Actions -> Secrets"
             exit 1
           fi
           echo "All required secrets are present."
+          echo "CLOUDFLARE_ACCOUNT_ID length: ${#CLOUDFLARE_ACCOUNT_ID}"
+          echo "CLOUDFLARE_API_TOKEN length: ${#CLOUDFLARE_API_TOKEN}"
 
   migrate:
     name: Database Migration
@@ -78,12 +77,25 @@ jobs:
           node-version: '20'
           cache: 'npm'
       - run: npm ci
-      - run: node scripts/bootstrap-admin.mjs
+      - name: Bootstrap admin account
+        id: bootstrap
+        continue-on-error: true
         env:
           SUPABASE_URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
           ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+        run: node scripts/bootstrap-admin.mjs 2>&1 | tee /tmp/bootstrap.log
+      # Job logs are not readable from this environment, so failures are
+      # re-emitted as annotations, which are reachable through the REST API.
+      - name: Surface failure
+        if: steps.bootstrap.outcome == 'failure'
+        run: |
+          tail -30 /tmp/bootstrap.log | sed -e 's/%/%25/g' -e 's/\r/%0D/g' | \
+            while IFS= read -r line; do
+              [ -n "$line" ] && echo "::error::bootstrap-admin: $line"
+            done
+          exit 1
 
   build:
     name: Build
@@ -96,9 +108,6 @@ jobs:
           node-version: '20'
           cache: 'npm'
       - run: npm ci
-      # Vite inlines VITE_* at build time. A missing value would otherwise ship
-      # a bundle that throws "Missing Supabase environment variables" on load
-      # and renders a blank page.
       - name: Verify build-time config
         env:
           VITE_PUBLIC_SUPABASE_URL: https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co
@@ -120,21 +129,42 @@ jobs:
   deploy-pages:
     name: Deploy to Cloudflare Pages
     runs-on: ubuntu-latest
-    # Deliberately does not depend on bootstrap-admin: an admin-account problem
-    # should not keep the site offline.
     needs: build
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
       - uses: actions/download-artifact@v4
         with:
           name: dist
           path: dist
-      - uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          # `functions/` at the repo root is bundled as Pages Functions.
-          command: pages deploy dist --project-name=bgpsc-community --commit-dirty=true --branch=main
+      - name: Deploy
+        id: pages
+        continue-on-error: true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -o pipefail
+          # Idempotent: harmless if the project already exists.
+          npx wrangler pages project create bgpsc-community \
+            --production-branch=main 2>&1 | tee /tmp/pages.log || true
+          # functions/ at the repo root is bundled as Pages Functions.
+          npx wrangler pages deploy dist \
+            --project-name=bgpsc-community \
+            --commit-dirty=true \
+            --branch=main 2>&1 | tee -a /tmp/pages.log
+      - name: Surface failure
+        if: steps.pages.outcome == 'failure'
+        run: |
+          tail -40 /tmp/pages.log | sed -e 's/%/%25/g' -e 's/\r/%0D/g' | \
+            while IFS= read -r line; do
+              [ -n "$line" ] && echo "::error::pages: $line"
+            done
+          exit 1
 
   deploy-worker:
     name: Deploy Worker
@@ -142,31 +172,51 @@ jobs:
     needs: migrate
     steps:
       - uses: actions/checkout@v4
-      # The Worker imports @supabase/supabase-js and web-push, so wrangler needs
-      # node_modules present to bundle it.
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
+      # The Worker imports @supabase/supabase-js and web-push, so wrangler needs
+      # node_modules present to bundle it.
       - run: npm ci
-      - uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          # `--config` selects the config file; a bare path would be read as the
-          # script entrypoint instead. wrangler splits --var on the first colon,
-          # so the https:// in the value is safe.
-          command: deploy --config worker/wrangler.toml --var SUPABASE_URL:https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co
-          secrets: |
-            SUPABASE_SERVICE_ROLE_KEY
-            CRON_SECRET
-            VAPID_PRIVATE_KEY
-            VAPID_PUBLIC_KEY
+      - name: Deploy
+        id: worker
+        continue-on-error: true
         env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -o pipefail
+          npx wrangler deploy --config worker/wrangler.toml \
+            --var SUPABASE_URL:https://${{ secrets.SUPABASE_PROJECT_REF }}.supabase.co \
+            2>&1 | tee /tmp/worker.log
+      # Secrets must be pushed AFTER the worker exists; doing it before is what
+      # made wrangler-action fail with "Failed to upload secrets."
+      - name: Set secrets
+        id: secrets
+        if: steps.worker.outcome == 'success'
+        continue-on-error: true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
           VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
           VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
+        run: |
+          set -o pipefail
+          for name in SUPABASE_SERVICE_ROLE_KEY CRON_SECRET VAPID_PRIVATE_KEY VAPID_PUBLIC_KEY; do
+            printf '%s' "${!name}" | npx wrangler secret put "$name" \
+              --config worker/wrangler.toml 2>&1 | tee -a /tmp/worker.log
+          done
+      - name: Surface failure
+        if: steps.worker.outcome == 'failure' || steps.secrets.outcome == 'failure'
+        run: |
+          tail -40 /tmp/worker.log | sed -e 's/%/%25/g' -e 's/\r/%0D/g' | \
+            while IFS= read -r line; do
+              [ -n "$line" ] && echo "::error::worker: $line"
+            done
+          exit 1
 
   deploy-edge-functions:
     name: Deploy Edge Functions
