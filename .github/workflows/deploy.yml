@@ -157,6 +157,18 @@ jobs:
             --project-name=bgpsc-community \
             --commit-dirty=true \
             --branch=main 2>&1 | tee -a /tmp/pages.log
+      - name: Capture URL
+        if: always()
+        run: |
+          grep -oE 'https://[a-z0-9.-]+\.pages\.dev' /tmp/pages.log 2>/dev/null | head -1 \
+            > pages-url.txt || true
+          echo "captured: $(cat pages-url.txt)"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pages-url
+          path: pages-url.txt
+          if-no-files-found: ignore
       - name: Surface failure
         if: steps.pages.outcome == 'failure'
         run: |
@@ -209,6 +221,18 @@ jobs:
             printf '%s' "${!name}" | npx wrangler secret put "$name" \
               --config worker/wrangler.toml 2>&1 | tee -a /tmp/worker.log
           done
+      - name: Capture URL
+        if: always()
+        run: |
+          grep -oE 'https://[a-z0-9.-]+\.workers\.dev' /tmp/worker.log 2>/dev/null | head -1 \
+            > worker-url.txt || true
+          echo "captured: $(cat worker-url.txt)"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: worker-url
+          path: worker-url.txt
+          if-no-files-found: ignore
       - name: Surface failure
         if: steps.worker.outcome == 'failure' || steps.secrets.outcome == 'failure'
         run: |
@@ -217,6 +241,54 @@ jobs:
               [ -n "$line" ] && echo "::error::worker: $line"
             done
           exit 1
+
+  verify:
+    name: Verify Live
+    runs-on: ubuntu-latest
+    needs: [deploy-pages, deploy-worker]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: pages-url
+          path: urls
+        continue-on-error: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: worker-url
+          path: urls
+        continue-on-error: true
+      - name: Probe deployed endpoints
+        continue-on-error: true
+        id: probe
+        run: |
+          ok=1
+          probe() {
+            name="$1"; url="$2"
+            [ -z "$url" ] && { echo "::warning::$name: no URL captured"; return 1; }
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 30 -L "$url" || echo "000")
+            echo "::notice::$name -> HTTP $code ($url)"
+            echo "$name=$code" >> "$GITHUB_OUTPUT"
+            [ "$code" = "200" ] || ok=0
+            return 0
+          }
+          worker_url=$(cat urls/worker-url.txt 2>/dev/null || true)
+          pages_url=$(cat urls/pages-url.txt 2>/dev/null || true)
+          probe "Pages production" "https://bgpsc-community.pages.dev/"
+          probe "Pages deployment" "$pages_url"
+          probe "Pages SPA route" "https://bgpsc-community.pages.dev/settings"
+          probe "Pages robots.txt" "https://bgpsc-community.pages.dev/robots.txt"
+          probe "Worker healthz" "${worker_url:+$worker_url/healthz}"
+          probe "Custom domain" "https://bgpscian.bsdc.info.bd/"
+          exit $((1 - ok))
+      - name: Report
+        if: always()
+        run: |
+          echo "Pages production: ${{ steps.probe.outputs.Pages_production }}"
+          echo "Pages deployment: ${{ steps.probe.outputs.Pages_deployment }}"
+          echo "Pages SPA route:  ${{ steps.probe.outputs.Pages_SPA_route }}"
+          echo "robots.txt:       ${{ steps.probe.outputs.Pages_robots_txt }}"
+          echo "Worker healthz:   ${{ steps.probe.outputs.Worker_healthz }}"
+          echo "Custom domain:    ${{ steps.probe.outputs.Custom_domain }}"
 
   deploy-edge-functions:
     name: Deploy Edge Functions
